@@ -1,0 +1,157 @@
+# notes-service
+
+A small notes API in Koka: HTTP/1.1 over TCP, JSON in and out, SQLite for
+storage, structured logs, and cancellation-aware cleanup throughout.
+
+This is the reference service for the Milestone-4 engineering program.  It
+exists to exercise the libraries under `koka-packages/`, not to be a product.
+
+## Setup
+
+You need the compiler from the sibling `koka` checkout (it provides the project
+commands and the `[native]` support this project relies on), plus `libuv` and
+`sqlite3`.  The workspace's `kk` wrapper supplies all of that:
+
+```sh
+../../kk fetch --locked     # resolve dependencies from koka.lock
+../../kk test               # unit tests
+../../kk build --release    # optimized build
+../../kk run                # start the server
+```
+
+`kk` runs the compiler inside `nix develop ../../koka`, which is what puts
+`pkg-config`, `libuv` and `sqlite3` on the path.  With those installed system
+wide, plain `koka` works too.
+
+Integration and stress tests start a real server process:
+
+```sh
+./run-integration-tests.sh
+./run-integration-tests.sh --asan     # under AddressSanitizer/UBSan/LeakSanitizer
+```
+
+## Configuration
+
+All optional, all read from the environment:
+
+| variable       | default     | meaning                                  |
+| -------------- | ----------- | ---------------------------------------- |
+| `NOTES_HOST`   | `127.0.0.1` | bind address                             |
+| `NOTES_PORT`   | `8080`      | port; `0` asks the OS for a free one     |
+| `NOTES_DB`     | `notes.db`  | SQLite database file                     |
+| `NOTES_LOG`    | `info`      | `debug` \| `info` \| `warn` \| `error`   |
+| `NOTES_RUN_MS` | `0`         | stop after this many ms; `0` runs forever |
+
+`NOTES_RUN_MS` exists so the integration tests can let the server shut itself
+down instead of killing it — which is what makes graceful shutdown observable.
+
+The database file is created on first run and migrated in place.  Migrations
+live in `src/notes/store.kk` and each runs in its own transaction; running them
+twice is a no-op.
+
+## Requests
+
+```sh
+curl localhost:8080/health
+curl -X POST -H 'content-type: application/json' \
+     -d '{"title":"buy milk","body":"semi-skimmed"}' localhost:8080/items
+curl localhost:8080/items
+curl localhost:8080/items/1
+curl -X DELETE localhost:8080/items/1
+```
+
+| method   | path         | success | notes                              |
+| -------- | ------------ | ------- | ---------------------------------- |
+| `GET`    | `/health`    | 200     | touches the database               |
+| `GET`    | `/items`     | 200     | newest first, at most 100          |
+| `GET`    | `/items/:id` | 200     | 404 when absent                    |
+| `POST`   | `/items`     | 201     | returns the stored note            |
+| `DELETE` | `/items/:id` | 204     | 404 when absent                    |
+
+Errors are separated by whose fault they are: 400 for malformed JSON, 415 for
+the wrong content type, 422 for a well-formed document that fails validation,
+413 for an oversized body, 404/405 from the router, and 500 with a generic body
+for anything internal — the detail goes to the log, never to the client.
+
+## Architecture
+
+```
+  main.kk            configuration, wiring, shutdown
+    notes/api.kk     routes, hand-written JSON codecs, validation
+    notes/store.kk   prepared statements, transactions, migrations
+      http/          message parsing, router, connection loop
+      runtime/       libuv event loop, tasks, TCP, channels
+      sqlite/        the SQLite binding
+      logging/       structured logging as an effect
+```
+
+One task per connection, all inside one task group, so a connection cannot
+outlive the server.  The event loop is single threaded: a database connection
+is used by one task at a time by construction, which is why there is no pool
+and no locking.
+
+## How Koka effects are used
+
+**Logging** is an effect (`logger`).  A handler says *what* happened; the
+handler installed at the edge decides where it goes and what context it
+carries.  The server installs it per connection with the request id already in
+context, so anything a handler logs carries that id without threading it
+through.  It is installed per connection rather than around the whole server
+because `spawn` fixes a task's effect row — a task cannot inherit an ambient
+`logger` from its parent.
+
+**Cancellation** is the `async` effect's doing.  A cancelled task is resumed
+once with `Cancelled`, every suspension point turns that into an exception, and
+that exception unwinds through the same path as any other — which is why
+cleanup needs no special case for shutdown.  A handler tells a cancellation
+from a real failure with `is-cancellation` and re-raises it rather than turning
+it into a 500.
+
+**Resource management** is scoped.  Outside tasks, `resource/scope` runs
+release on success, failure and cancellation.  *Inside* a task, `finally`
+cannot span a suspension point — when the scheduler captures a continuation and
+returns without resuming, Koka treats the computation as abandoned and runs
+`finally` immediately — so sockets use `runtime/task`'s `defer`, which releases
+when the task really ends.  Database connections and statements are outside
+that path and use `resource/scope` directly.
+
+**Application services** are passed as plain values, not effects.  The database
+handle is an argument.  An effect would have bought indirection without buying
+anything testable: the store is already swappable by passing a different
+connection, and the unit tests use `:memory:`.
+
+## Limits
+
+Every one is enforced while reading, not after:
+
+| limit                | value  |
+| -------------------- | ------ |
+| request line         | 8 KiB  |
+| header block         | 16 KiB |
+| header count         | 100    |
+| request body         | 1 MiB  |
+| title / body         | 200 / 10000 characters |
+| page size            | 100 notes |
+| concurrent connections | 256  |
+| requests per connection | 100 |
+| request timeout      | 15 s   |
+| idle keep-alive      | 30 s   |
+
+## Known limitations
+
+* **The listener stops accepting after a burst of concurrent connections.**
+  Reproducible: start the server, issue ~15 concurrent requests, and the next
+  connection is never accepted — libuv's connection callback stops firing on
+  the listening handle even though the loop is still running and the process is
+  otherwise healthy. Sequential and keep-alive traffic are unaffected, and
+  every request that *is* accepted is served correctly. This is a defect in
+  `runtime/src/runtime/uv-inline.c`, not in the service, and it is the reason
+  `run-integration-tests.sh` reports failures in its concurrency and stress
+  groups.
+* Shutdown is driven by `NOTES_RUN_MS` rather than a signal; the runtime has no
+  signal handling yet.
+* IPv4 only.
+* No TLS. Put a terminating proxy in front of it.
+* No authentication, no pagination cursors, no partial updates.
+* The task scheduler is cooperative: a handler that never suspends is not
+  interrupted by cancellation.

@@ -1,0 +1,3 @@
+# koka project artifacts and fetched dependencies
+.koka/
+*.db

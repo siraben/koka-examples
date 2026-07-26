@@ -1,0 +1,28 @@
+[package]
+name = "notes-service"
+version = "0.1.0"
+koka = ">=3.2,<4"
+
+[sources]
+directories = ["src"]
+
+[dependencies]
+bytes      = { path = "../../koka-packages/bytes" }
+strbuilder = { path = "../../koka-packages/strbuilder" }
+json       = { path = "../../koka-packages/json" }
+sqlite     = { path = "../../koka-packages/sqlite" }
+http       = { path = "../../koka-packages/http" }
+runtime    = { path = "../../koka-packages/runtime" }
+logging    = { path = "../../koka-packages/logging" }
+resource   = { path = "../../koka-packages/resource" }
+fileio     = { path = "../../koka-packages/fileio" }
+kktest     = { path = "../../koka-packages/kktest" }
+
+[native]
+pkg-config = ["libuv", "sqlite3"]
+
+[targets.app]
+main = "src/main.kk"
+
+[targets.test]
+directories = ["test"]
