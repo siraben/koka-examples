@@ -48,7 +48,7 @@ dependencies = ["kktest"]
 [packages.runtime]
 kind = "path"
 path = "../runtime"
-checksum = "sha256:ae368108e3a10a65a087269e9e5faf531fbd2533e1c129328121178b6bcb1240"
+checksum = "sha256:52f197567ad167ca7a552aa603d5d3cead6e62595d65c6def7cf7ee7febe7dcf"
 dependencies = ["bytes", "kktest", "resource"]
 
 [packages.sqlite]

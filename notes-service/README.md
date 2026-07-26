@@ -139,27 +139,36 @@ Every one is enforced while reading, not after:
 
 ## Known limitations
 
-* **The server shuts itself down after a burst of concurrent connections.**
-  Reproducible: start the server, issue ~6 or more concurrent requests, and the
-  listener is closed and the port released a moment later. Every request in the
-  burst is served correctly first — the data is in the database and the 201s
-  come back — so this is a shutdown bug, not a request-handling bug.
+* **Concurrent connections are not served.** Sequential traffic is completely
+  reliable — 30 requests back to back, 0 failures — but a burst of concurrent
+  connections leaves the server unable to serve anything further, even though
+  it stays alive for its full deadline and shuts down cleanly.
 
-  What was established while narrowing it down:
+  Everything that was ruled out, so the next person does not repeat it:
 
-  * the process stays alive and logs `server stopped` cleanly, so nothing
-    crashes and no task throws (a per-connection failure would log
-    `connection failed`, and none appears);
-  * `server stopped` is logged only after `ready` returns, so the root task's
-    `sleep(NOTES_RUN_MS)` is returning early — long before its deadline;
-  * `sleep` is `arm-timer` plus `await`, so the root's continuation is being
-    resumed by something other than its own timer completion.
+  * **Not memory corruption.** The whole burst under AddressSanitizer,
+    UndefinedBehaviorSanitizer and LeakSanitizer is clean.
+  * **Not an early shutdown.** `server listening` to `server stopped` measures
+    the configured runtime to within 2ms, so the task group runs to completion
+    and the root task's timer is accurate.
+  * **Not the listener being closed.** The close is timestamped at exactly the
+    shutdown deadline, and a connected socket can no longer close a listening
+    one (the C side refuses a kind mismatch).
+  * **Not a stalled event loop.** `uv_run` keeps being called on its 1-second
+    cadence throughout.
+  * **Not libuv's "callback did not accept" path.** Every path through the
+    connection callback now consumes the pending connection, and the
+    instrumentation for the failure paths never fired.
+  * **Not a failing task.** Only one task ever fails, and it fails with
+    `task cancelled` during the ordinary teardown at the end.
 
-  The suspicion is therefore request-id aliasing or a stale completion in
-  `runtime/src/runtime/{loop.kk,task.kk,uv-inline.c}` waking the wrong parked
-  task, not anything in this service or in `http`. It is why
-  `run-integration-tests.sh` reports failures in its concurrency, stress and
-  persistence groups (33 of its assertions pass).
+  What is left: the listening handle reports itself active and the loop is
+  running, yet new connections are not delivered to the connection callback.
+  The remaining suspect is the interaction between the C-side accept backlog
+  (used only when connections arrive faster than the accept loop arms) and the
+  one-waiter-per-listener rule in `kk_uv_accept`. Reproduce with
+  `NOTES_PORT=… NOTES_RUN_MS=20000` and ~15 concurrent POSTs.
+
 * Shutdown is driven by `NOTES_RUN_MS` rather than a signal; the runtime has no
   signal handling yet.
 * IPv4 only.
