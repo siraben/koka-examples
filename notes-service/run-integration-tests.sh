@@ -113,14 +113,14 @@ eq "a non-numeric id is 400" 400 "$(code "$BASE/items/abc")"
 
 # an oversized body must be refused, not buffered
 python3 -c "print('{\"title\":\"a\",\"body\":\"' + 'x'*2000000 + '\"}')" > "$work/big.json"
+# `000` is not accepted here: curl prints it for connection-refused, DNS
+# failure *and* its own timeout, so a server that crashed on the 2 MB body
+# would have satisfied the old assertion.  The limit is enforced by the HTTP
+# layer while reading, so the answer is 413 and nothing else.
 big_code="$(curl -s -m 20 -o /dev/null -w '%{http_code}' -X POST \
               -H 'content-type: application/json' \
               --data-binary "@$work/big.json" "$BASE/items" 2>/dev/null)"
-case "$big_code" in
-  413|400) ok "an oversized body is rejected (HTTP $big_code)" ;;
-  000)     ok "an oversized body is refused at the connection level" ;;
-  *)       bad "an oversized body is rejected" "got HTTP $big_code" ;;
-esac
+eq "an oversized body is rejected with 413" 413 "$big_code"
 eq "the server still works after an oversized request" 200 "$(code "$BASE/health")"
 
 # ---------------------------------------------------------------------------
@@ -139,26 +139,39 @@ grp "concurrency"
 # was started with `&` -- so every check after it would run against a server
 # that had already shut down, and the whole group would look like a
 # concurrency failure when nothing was wrong.
+# Baseline first, then require exactly +40.  `-ge 40` passed when 39 of the 40
+# landed, because a note left over from the lifecycle section was already
+# there -- the assertion's own name was the thing it did not check.
+before="$(body "$BASE/items" | sed -n 's/.*"count":\([0-9]*\).*/\1/p')"
 client_pids=()
 for i in $(seq 1 40); do
-  ( curl -s -m 10 -o /dev/null -X POST -H 'content-type: application/json' \
-         -d "{\"title\":\"c$i\"}" "$BASE/items" ) &
+  ( curl -s -m 10 -o "$work/c$i.status" -w '%{http_code}\n' \
+         -X POST -H 'content-type: application/json' \
+         -d "{\"title\":\"c$i\"}" "$BASE/items" > "$work/c$i.code" ) &
   client_pids+=($!)
 done
 wait "${client_pids[@]}"
+bad_codes="$(cat "$work"/c*.code | grep -cv '^201$' || true)"
+eq "every concurrent create returned 201" 0 "$bad_codes"
 count="$(body "$BASE/items" | sed -n 's/.*"count":\([0-9]*\).*/\1/p')"
-[ -n "$count" ] && [ "$count" -ge 40 ] \
+[ -n "$count" ] && [ "$count" -eq $((before + 40)) ] \
   && ok "40 concurrent creates all landed (count=$count)" \
-  || bad "40 concurrent creates all landed" "count=$count"
+  || bad "40 concurrent creates all landed" "before=$before after=$count, expected $((before + 40))"
 eq "the server is healthy afterwards" 200 "$(code "$BASE/health")"
 
 # ---------------------------------------------------------------------------
 grp "stress"
 
-# repeated connect and disconnect, without sending anything
+# Repeated connect and disconnect, without sending anything.  The successes
+# are counted: with the result discarded, a machine without /dev/tcp ran zero
+# connections and the assertion still passed.
+opened=0
 for _ in $(seq 1 100); do
-  (exec 3<>/dev/tcp/127.0.0.1/$PORT) 2>/dev/null && exec 3<&- 3>&-
+  if (exec 3<>/dev/tcp/127.0.0.1/$PORT) 2>/dev/null; then
+    opened=$((opened+1)); exec 3<&- 3>&-
+  fi
 done
+eq "100 connect/disconnect cycles were actually made" 100 "$opened"
 eq "survives 100 connect/disconnect cycles" 200 "$(code "$BASE/health")"
 
 # many short requests over fresh connections
@@ -175,7 +188,19 @@ ka="$(curl -s -m 10 -w '%{http_code} ' \
         -o /dev/null "$BASE/health" \
         -o /dev/null "$BASE/items" \
         -o /dev/null "$BASE/health" 2>/dev/null)"
-contains "keep-alive serves several requests on one connection" "200 200 200" "$ka "
+contains "three requests down one connection all succeed" "200 200 200" "$ka "
+# ...and that they really shared a connection.  curl reconnects silently, so
+# three 200s alone would also be produced by a server closing every response.
+reused="$(curl -sv -m 10 -o /dev/null "$BASE/health" -o /dev/null "$BASE/health" 2>&1 \
+          | grep -ci 'reusing existing' || true)"
+[ "$reused" -ge 1 ] \
+  && ok "the connection is reused, not reopened" \
+  || bad "the connection is reused, not reopened" "curl did not report reuse"
+
+# The two probes below pipe into `nc` and discard the result, so without this
+# check a machine with no `nc` would "pass" them by doing nothing at all.
+command -v nc >/dev/null && ok "nc is available for the raw-socket probes" \
+                         || bad "nc is available for the raw-socket probes"
 
 # a slow client: send a request line, pause, then the rest
 slow="$( { printf 'GET /health HTTP/1.1\r\nhost: x\r\n'; sleep 1; printf '\r\n'; sleep 1; } \
@@ -208,9 +233,13 @@ grp "graceful shutdown"
 stop_server
 contains "the server logs that it stopped" '"msg":"server stopped"' "$(cat "$LOG")"
 sleep 0.5
-[ "$(code "$BASE/health")" = "000" ] \
+# Exit code 7 is "failed to connect", which is the thing being asserted.
+# Matching on `000` also accepted a server that was still listening but wedged,
+# because curl prints `000` for its own timeout too.
+curl -s -m 5 -o /dev/null "$BASE/health" 2>/dev/null
+[ "$?" -eq 7 ] \
   && ok "the port is released after shutdown" \
-  || bad "the port is released after shutdown"
+  || bad "the port is released after shutdown" "curl exit $? (7 = connection refused)"
 grep -q "uncaught exception" "$LOG" \
   && bad "shutdown is clean" "$(grep 'uncaught exception' "$LOG" | head -2)" \
   || ok "shutdown leaves no uncaught exception"
