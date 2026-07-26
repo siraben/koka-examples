@@ -18,7 +18,7 @@ dependencies = ["bytes", "kktest", "resource"]
 [packages.http]
 kind = "path"
 path = "../../koka-packages/http"
-checksum = "sha256:4e3c116ed50b291eba3d555f072351dbd7425863a7bd674b904f5580cb0035e6"
+checksum = "sha256:9077dd9e73356eae84294ae6ba60c24e47d1f6a8129f7b7a7d3b4f075a777bca"
 dependencies = ["bytes", "kktest", "logging", "runtime", "strbuilder"]
 
 [packages.json]
@@ -48,7 +48,7 @@ dependencies = ["kktest"]
 [packages.runtime]
 kind = "path"
 path = "../runtime"
-checksum = "sha256:fc098684e26d501dc980dac25d6094b664482ef37a84845d35a97c8ccf5b02e6"
+checksum = "sha256:f2a29f4053024df220fc184a1828b0eabf6ef8be7b001308244416847dacbc14"
 dependencies = ["bytes", "kktest", "resource"]
 
 [packages.sqlite]

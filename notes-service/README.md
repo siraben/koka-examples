@@ -139,15 +139,27 @@ Every one is enforced while reading, not after:
 
 ## Known limitations
 
-* **The listener stops accepting after a burst of concurrent connections.**
-  Reproducible: start the server, issue ~15 concurrent requests, and the next
-  connection is never accepted — libuv's connection callback stops firing on
-  the listening handle even though the loop is still running and the process is
-  otherwise healthy. Sequential and keep-alive traffic are unaffected, and
-  every request that *is* accepted is served correctly. This is a defect in
-  `runtime/src/runtime/uv-inline.c`, not in the service, and it is the reason
-  `run-integration-tests.sh` reports failures in its concurrency and stress
-  groups.
+* **The server shuts itself down after a burst of concurrent connections.**
+  Reproducible: start the server, issue ~6 or more concurrent requests, and the
+  listener is closed and the port released a moment later. Every request in the
+  burst is served correctly first — the data is in the database and the 201s
+  come back — so this is a shutdown bug, not a request-handling bug.
+
+  What was established while narrowing it down:
+
+  * the process stays alive and logs `server stopped` cleanly, so nothing
+    crashes and no task throws (a per-connection failure would log
+    `connection failed`, and none appears);
+  * `server stopped` is logged only after `ready` returns, so the root task's
+    `sleep(NOTES_RUN_MS)` is returning early — long before its deadline;
+  * `sleep` is `arm-timer` plus `await`, so the root's continuation is being
+    resumed by something other than its own timer completion.
+
+  The suspicion is therefore request-id aliasing or a stale completion in
+  `runtime/src/runtime/{loop.kk,task.kk,uv-inline.c}` waking the wrong parked
+  task, not anything in this service or in `http`. It is why
+  `run-integration-tests.sh` reports failures in its concurrency, stress and
+  persistence groups (33 of its assertions pass).
 * Shutdown is driven by `NOTES_RUN_MS` rather than a signal; the runtime has no
   signal handling yet.
 * IPv4 only.
