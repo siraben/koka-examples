@@ -30,11 +30,18 @@ Integration and stress tests start a real server process:
 ./run-integration-tests.sh --asan     # under AddressSanitizer/UBSan/LeakSanitizer
 ```
 
-42 assertions covering readiness, the item lifecycle, malformed and oversized
+46 assertions covering readiness, the item lifecycle, malformed and oversized
 input, routing, 40 concurrent creates, stress (connect/disconnect churn, 100
 short requests, keep-alive, a slow client, a client that vanishes mid-request,
 an abandoned request), logging, graceful shutdown, and persistence across a
 restart. All pass, with and without the sanitizers.
+
+Several of these assertions check their own setup, which is not decoration:
+`curl` prints `000` for connection-refused, DNS failure *and* its own timeout,
+so matching on it accepted a crashed server as a passing test; and a probe
+piped into `nc` with `|| true` degrades silently to "is /health still 200?" on
+a machine without `nc`. The counts and the connection-reuse check exist so a
+no-op cannot pass.
 
 A note for anyone extending the suite: `wait` with no arguments waits for
 *every* background job, including the server the script started with `&`. Use
@@ -134,20 +141,41 @@ connection, and the unit tests use `:memory:`.
 
 ## Limits
 
-Every one is enforced while reading, not after:
+The transport limits are enforced while reading, so an oversized request is
+refused before it is buffered:
 
-| limit                | value  |
-| -------------------- | ------ |
-| request line         | 8 KiB  |
-| header block         | 16 KiB |
-| header count         | 100    |
-| request body         | 1 MiB  |
-| title / body         | 200 / 10000 characters |
-| page size            | 100 notes |
-| concurrent connections | 256  |
-| requests per connection | 100 |
-| request timeout      | 15 s   |
-| idle keep-alive      | 30 s   |
+| limit                | value  | exceeded |
+| -------------------- | ------ | -------- |
+| request line         | 8 KiB  | 414      |
+| header block         | 16 KiB | 431      |
+| header count         | 100    | 431      |
+| request body         | 1 MiB  | 413      |
+| reads per request    | 1024   | 408      |
+| concurrent connections | 256  | connection not accepted |
+| requests per connection | 100 | connection closed |
+| request timeout      | 15 s   | 408      |
+| idle keep-alive      | 30 s   | connection closed |
+
+The parser limits are resource ceilings, checked while parsing. Exceeding one
+is malformed input:
+
+| limit                | value  | exceeded |
+| -------------------- | ------ | -------- |
+| JSON document        | 1 MiB  | 400      |
+| JSON nesting depth   | 8      | 400      |
+| JSON object members  | 32     | 400      |
+
+The field limits are this API's own rules, checked after a document has parsed.
+Exceeding one is a well-formed request we decline:
+
+| limit                | value  | exceeded |
+| -------------------- | ------ | -------- |
+| title / body         | 200 / 10000 characters | 422 |
+| page size            | 100 notes | (silently capped) |
+
+The three tables are separate on purpose. Setting the parser ceiling to the
+field limit collapsed the distinction, and a body of 10001 valid characters
+came back as 400 "malformed JSON" rather than 422 "the body is too long".
 
 ## Known limitations
 
