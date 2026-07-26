@@ -18,36 +18,36 @@ dependencies = ["bytes", "kktest", "resource"]
 [packages.http]
 kind = "path"
 path = "../../koka-packages/http"
-checksum = "sha256:f84d3f7285d82f67d482d925142a1d1fee61c0865673adf135b32f868dfe2850"
+checksum = "sha256:a021b6a3df07a78ba3801ff3c6d92203ece82a4b157cf64381c87d8366baf118"
 dependencies = ["bytes", "kktest", "logging", "runtime", "strbuilder"]
 
 [packages.json]
 kind = "path"
-path = "../json"
+path = "../../koka-packages/json"
 checksum = "sha256:e0013f2441037b143299fa4b2d1ebfd71ac241706547652f3085a23bb8e25acc"
 dependencies = ["bytes", "kktest", "strbuilder"]
 
 [packages.kktest]
 kind = "path"
-path = "../kktest"
+path = "../../koka-packages/kktest"
 checksum = "sha256:c1c451b4d04fd95f78a2b37a7a6d508305c77874a14dc46107e6f9055a69dce1"
 dependencies = []
 
 [packages.logging]
 kind = "path"
-path = "../logging"
+path = "../../koka-packages/logging"
 checksum = "sha256:5963e3fdc9c6e3c171e8b5666d81b68f316953c38162a630e6154b5ce961aa7b"
 dependencies = ["json", "kktest", "strbuilder"]
 
 [packages.resource]
 kind = "path"
-path = "../resource"
+path = "../../koka-packages/resource"
 checksum = "sha256:84f94b43c11d171da59169d1d31dd2d71f44accc17572e23d7de12d2e8d8427d"
 dependencies = ["kktest"]
 
 [packages.runtime]
 kind = "path"
-path = "../runtime"
+path = "../../koka-packages/runtime"
 checksum = "sha256:25bed3a0f822c6a0a385004653d0cbcaab97374da726617a0f1e909e310aa63c"
 dependencies = ["bytes", "kktest", "resource"]
 
@@ -59,6 +59,6 @@ dependencies = ["bytes", "kktest", "resource"]
 
 [packages.strbuilder]
 kind = "path"
-path = "../strbuilder"
+path = "../../koka-packages/strbuilder"
 checksum = "sha256:85cb39b6dcb63c8ea0e5958788151c48c23a34381fe63df2cc7bd4bc5d617c54"
 dependencies = ["bytes", "kktest"]
