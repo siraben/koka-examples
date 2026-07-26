@@ -24,10 +24,21 @@ pub val title-limit : int = 200
 pub val body-limit  : int = 10000
 pub val page-size : int = 100
 
-// The JSON parser's own limits, scaled to what a note may contain.
+// The JSON parser's own limits.
+//
+// `max-bytes` and `max-string` are deliberately *not* the field limits.  A
+// parser limit is a resource ceiling -- exceeding it is malformed input, 400.
+// A field limit is a rule about this API -- exceeding it is a well-formed
+// document that says something we will not store, 422.  Setting the parser
+// ceiling to the field limit collapses the two, and a body of 10001 valid
+// characters came back as "malformed JSON" instead of "the body is too long".
+// So the parser is allowed everything the HTTP layer let through, and
+// `validate` is what enforces the API's own rules.
+val max-request-body : int = 1024 * 1024
+
 val json-limits : parse/limits
-  = parse/default-limits(max-bytes = body-limit + title-limit + 1024,
-                         max-depth = 8, max-members = 32, max-string = body-limit)
+  = parse/default-limits(max-bytes = max-request-body, max-depth = 8,
+                         max-members = 32, max-string = max-request-body)
 
 // ----------------------------------------------------------------------------
 // codecs
@@ -125,10 +136,12 @@ fun get-item( d : database, p : params ) : <async,logger|io> response
 fun create-item( d : database, r : request ) : <async,logger|io> response
   // The server has already enforced the body size limit; this is the content
   // check, which is a different thing.
-  match r.header("content-type")
-    Just(ct) | !ct.to-lower.contains("application/json") ->
-      client-error(415, "expected content-type: application/json")
-    _ ->
+  // A missing header, `application/jsonp`, and `text/plain; x=application/json`
+  // all used to pass a `contains` check.  Compare the media type itself, with
+  // any parameters stripped, and require it to be present.
+  if !r.is-json then
+    client-error(415, "expected content-type: application/json")
+  else
       match parse(r.body, json-limits)
         Left(e)  -> client-error(400, "malformed JSON: " ++ e.show)
         Right(j) ->
@@ -148,13 +161,21 @@ fun delete-item( d : database, p : params ) : <async,logger|io> response
         Ok(True)    -> response(204)
         Ok(False)   -> client-error(404, "no note with id " ++ id.show)
 
+fun is-json( r : request ) : div bool
+  match r.header("content-type")
+    Nothing -> False
+    Just(ct) -> ct.split(";").head.default("").trim.to-lower == "application/json"
+
+// `strict-nat` rather than `parse-int`: the latter accepts `0x1`, `+1` and
+// `1_0`, so `/items/0x1` would delete note 1 while reading as something else
+// to any gateway in front of us.
 fun parse-id( p : params ) : div either<string, int>
   match p.param("id")
     Nothing -> Left("missing id")
     Just(s) ->
-      match s.parse-int
-        Nothing -> Left("id must be an integer, got " ++ s.show)
-        Just(i) -> if i < 0 then Left("id must not be negative") else Right(i)
+      match s.strict-nat
+        Nothing -> Left("id must be a decimal integer, got " ++ s.show)
+        Just(i) -> Right(i)
 
 // Turn an exception into a response.  A cancellation is the server shutting
 // down and must propagate; anything else is ours and is logged, not shown.

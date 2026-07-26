@@ -30,10 +30,13 @@ pub val schema : list<migration>
         "CREATE INDEX notes_created ON notes (created DESC)")
     ]
 
+// A migration that throws would otherwise strand the connection it was handed:
+// nothing else holds it, and sqlite will not close it for us.
 pub fun open-store( path : string ) : io database
   val d = db/open(path)
-  migrate(d, schema)
-  d
+  match try({ migrate(d, schema) })
+    Ok(_)     -> d
+    Error(ex) -> { d.close; throw-exn(ex) }
 
 pub fun with-store( path : string, action : (database) -> io a ) : io a
   with-database(path) fn(d)
