@@ -135,12 +135,17 @@ eq "a deeper unknown path is 404" 404 "$(code "$BASE/items/1/extra")"
 # ---------------------------------------------------------------------------
 grp "concurrency"
 
-conc_ok=0
+# Wait on the *clients* only.  A bare `wait` also waits for the server, which
+# was started with `&` -- so every check after it would run against a server
+# that had already shut down, and the whole group would look like a
+# concurrency failure when nothing was wrong.
+client_pids=()
 for i in $(seq 1 40); do
   ( curl -s -m 10 -o /dev/null -X POST -H 'content-type: application/json' \
          -d "{\"title\":\"c$i\"}" "$BASE/items" ) &
+  client_pids+=($!)
 done
-wait
+wait "${client_pids[@]}"
 count="$(body "$BASE/items" | sed -n 's/.*"count":\([0-9]*\).*/\1/p')"
 [ -n "$count" ] && [ "$count" -ge 40 ] \
   && ok "40 concurrent creates all landed (count=$count)" \
@@ -163,9 +168,13 @@ for _ in $(seq 1 100); do
 done
 eq "100 short requests all succeed" 0 "$short_fail"
 
-# keep-alive: several requests down one connection
-ka="$(curl -s -m 10 -o /dev/null -w '%{http_code} ' \
-        "$BASE/health" "$BASE/items" "$BASE/health" 2>/dev/null)"
+# keep-alive: several requests down one connection.
+# One -o per URL: curl applies them positionally, so a single -o would discard
+# only the first body and let the rest land in the captured output.
+ka="$(curl -s -m 10 -w '%{http_code} ' \
+        -o /dev/null "$BASE/health" \
+        -o /dev/null "$BASE/items" \
+        -o /dev/null "$BASE/health" 2>/dev/null)"
 contains "keep-alive serves several requests on one connection" "200 200 200" "$ka "
 
 # a slow client: send a request line, pause, then the rest
@@ -185,7 +194,9 @@ eq "the server is alive after an abandoned request" 200 "$(code "$BASE/health")"
 # ---------------------------------------------------------------------------
 grp "logging"
 
-contains "logs are line-delimited json"  '"level":"info"' "$(head -5 "$LOG")"
+# Grep the whole log rather than its head: a sanitizer build prints compiler
+# notes first, and those are not the server's output.
+contains "logs are line-delimited json"  '"level":"info"' "$(grep -m1 '^{' "$LOG")"
 contains "logs carry a request id"       '"request-id":"r' "$(cat "$LOG")"
 contains "logs carry the status"         '"status":"200"'  "$(cat "$LOG")"
 contains "logs carry the method and path" '"path":"/health"' "$(cat "$LOG")"

@@ -30,6 +30,18 @@ Integration and stress tests start a real server process:
 ./run-integration-tests.sh --asan     # under AddressSanitizer/UBSan/LeakSanitizer
 ```
 
+42 assertions covering readiness, the item lifecycle, malformed and oversized
+input, routing, 40 concurrent creates, stress (connect/disconnect churn, 100
+short requests, keep-alive, a slow client, a client that vanishes mid-request,
+an abandoned request), logging, graceful shutdown, and persistence across a
+restart. All pass, with and without the sanitizers.
+
+A note for anyone extending the suite: `wait` with no arguments waits for
+*every* background job, including the server the script started with `&`. Use
+`wait "${client_pids[@]}"`. A bare `wait` made the whole concurrency and stress
+section run against a server that had already shut down, which looked exactly
+like a server that could not handle concurrent load.
+
 ## Configuration
 
 All optional, all read from the environment:
@@ -138,36 +150,6 @@ Every one is enforced while reading, not after:
 | idle keep-alive      | 30 s   |
 
 ## Known limitations
-
-* **Concurrent connections are not served.** Sequential traffic is completely
-  reliable — 30 requests back to back, 0 failures — but a burst of concurrent
-  connections leaves the server unable to serve anything further, even though
-  it stays alive for its full deadline and shuts down cleanly.
-
-  Everything that was ruled out, so the next person does not repeat it:
-
-  * **Not memory corruption.** The whole burst under AddressSanitizer,
-    UndefinedBehaviorSanitizer and LeakSanitizer is clean.
-  * **Not an early shutdown.** `server listening` to `server stopped` measures
-    the configured runtime to within 2ms, so the task group runs to completion
-    and the root task's timer is accurate.
-  * **Not the listener being closed.** The close is timestamped at exactly the
-    shutdown deadline, and a connected socket can no longer close a listening
-    one (the C side refuses a kind mismatch).
-  * **Not a stalled event loop.** `uv_run` keeps being called on its 1-second
-    cadence throughout.
-  * **Not libuv's "callback did not accept" path.** Every path through the
-    connection callback now consumes the pending connection, and the
-    instrumentation for the failure paths never fired.
-  * **Not a failing task.** Only one task ever fails, and it fails with
-    `task cancelled` during the ordinary teardown at the end.
-
-  What is left: the listening handle reports itself active and the loop is
-  running, yet new connections are not delivered to the connection callback.
-  The remaining suspect is the interaction between the C-side accept backlog
-  (used only when connections arrive faster than the accept loop arms) and the
-  one-waiter-per-listener rule in `kk_uv_accept`. Reproduce with
-  `NOTES_PORT=… NOTES_RUN_MS=20000` and ~15 concurrent POSTs.
 
 * Shutdown is driven by `NOTES_RUN_MS` rather than a signal; the runtime has no
   signal handling yet.
