@@ -138,6 +138,27 @@ document this API declines is not a malformed one, and `attempt` turns anything
 the store raises into a logged 500 — after re-raising cancellation, which is
 the server stopping rather than a request failing.
 
+**The store is an effect, and the tests give it a different meaning.**  The
+routes never mention SQLite:
+
+```koka
+pub fun list-items() : <notes,async,logger|io> response
+  with ns <- attempt({ list-from-store(page-size) }).or-respond
+  ok-json(notes-json(ns))
+```
+
+`routes(d)` installs `with-sqlite(d)`, so the service talks to the database.
+`unit-test.kk` installs `with-memory(seed)` instead, and the same handlers run
+over a list — no file, no database, no clock.  That is what the effect buys
+over a `:database` argument: a connection parameter makes the store swappable
+for *another database*, an effect makes it swappable for something that is not
+a database at all, so the HTTP surface can be tested without one.
+
+The in-memory handler numbers ids from one and derives `created` from a fixed
+instant, so tests assert on exact ids and timestamps — which the SQLite
+handler, taking its timestamps from the clock, cannot offer.  Eight tests
+cover status codes, validation and codecs this way and open nothing.
+
 **Logging** is an effect (`logger`).  A handler says *what* happened; the
 handler installed at the edge decides where it goes and what context it
 carries.  The server installs it per connection with the request id already in

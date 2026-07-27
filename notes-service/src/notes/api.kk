@@ -103,12 +103,15 @@ fun server-error() : div response
 // routes
 // ----------------------------------------------------------------------------
 
+// The routes are written against the `notes` effect, so this is the only place
+// that knows the notes live in SQLite.  `unit-test.kk` calls the same handlers
+// under `with-memory` and never opens a database.
 pub fun routes( d : database ) : list<route<<async,logger|io>>>
-  [ route("GET",    "/health",    fn(_r, _p) health(d))
-  , route("GET",    "/items",     fn(_r, _p) list-items(d))
-  , route("GET",    "/items/:id", fn(_r, p)  get-item(d, p))
-  , route("POST",   "/items",     fn(r,  _p) create-item(d, r))
-  , route("DELETE", "/items/:id", fn(_r, p)  delete-item(d, p))
+  [ route("GET",    "/health",    fn(_r, _p) with-sqlite(d){ health() })
+  , route("GET",    "/items",     fn(_r, _p) with-sqlite(d){ list-items() })
+  , route("GET",    "/items/:id", fn(_r, p)  with-sqlite(d){ get-item(p) })
+  , route("POST",   "/items",     fn(r,  _p) with-sqlite(d){ create-item(r) })
+  , route("DELETE", "/items/:id", fn(_r, p)  with-sqlite(d){ delete-item(p) })
   ]
 
 // ----------------------------------------------------------------------------
@@ -123,8 +126,8 @@ pub fun routes( d : database ) : list<route<<async,logger|io>>>
 // deep and the interesting line is the innermost one.
 pub alias step<a> = either<response,a>
 
-fun or-respond( s : step<a>, next : (a) -> <async,logger|io> response )
-    : <async,logger|io> response
+fun or-respond( s : step<a>, next : (a) -> <notes,async,logger|io> response )
+    : <notes,async,logger|io> response
   match s
     Left(resp) -> resp
     Right(v)   -> next(v)
@@ -167,7 +170,7 @@ fun note-id( p : params ) : div step<int>
 // Run a store operation.  A cancellation is the server stopping and propagates;
 // anything else is ours, so it is logged and answered with a 500 that says
 // nothing about it.
-fun attempt( action : () -> <async,logger|io> a ) : <async,logger|io> step<a>
+fun attempt( action : () -> <notes,async,logger|io> a ) : <notes,async,logger|io> step<a>
   match try(action)
     Ok(v)     -> Right(v)
     Error(ex) ->
@@ -180,33 +183,33 @@ fun attempt( action : () -> <async,logger|io> a ) : <async,logger|io> step<a>
 // handlers
 // ----------------------------------------------------------------------------
 
-fun health( d : database ) : <async,logger|io> response
-  // A health check that does not touch the database is not a health check.
-  match try({ count-notes(d) })
+pub fun health() : <notes,async,logger|io> response
+  // A health check that does not touch the store is not a health check.
+  match try({ count-in-store() })
     Ok(n)     -> ok-json(JsObject([("status", JsString("ok")), ("notes", JsInt(n))]))
     Error(ex) ->
       error("health check failed", [("error", ex.message)])
       json-response(503, "{\"status\":\"unavailable\"}")
 
-fun list-items( d : database ) : <async,logger|io> response
-  with ns <- attempt({ list-notes(d, page-size) }).or-respond
+pub fun list-items() : <notes,async,logger|io> response
+  with ns <- attempt({ list-from-store(page-size) }).or-respond
   ok-json(notes-json(ns))
 
-fun get-item( d : database, p : params ) : <async,logger|io> response
+pub fun get-item( p : params ) : <notes,async,logger|io> response
   with id <- p.note-id.or-respond
-  with mb <- attempt({ get-note(d, id) }).or-respond
+  with mb <- attempt({ fetch-from-store(id) }).or-respond
   match mb
     Just(n) -> ok-json(note-json(n))
     Nothing -> client-error(404, "no note with id " ++ id.show)
 
-fun create-item( d : database, r : request ) : <async,logger|io> response
+pub fun create-item( r : request ) : <notes,async,logger|io> response
   with j             <- r.json-body.or-respond
   with (title, body) <- new-note(j).or-respond
-  with n             <- attempt({ create-note(d, title, body) }).or-respond
+  with n             <- attempt({ create-in-store(title, body) }).or-respond
   created-json(note-json(n))
 
-fun delete-item( d : database, p : params ) : <async,logger|io> response
+pub fun delete-item( p : params ) : <notes,async,logger|io> response
   with id      <- p.note-id.or-respond
-  with removed <- attempt({ delete-note(d, id) }).or-respond
+  with removed <- attempt({ remove-from-store(id) }).or-respond
   if removed then response(204)
   else client-error(404, "no note with id " ++ id.show)

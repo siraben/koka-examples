@@ -8,6 +8,28 @@ import http/message
 import http/router
 import notes/store
 import notes/api
+import logging/log
+import runtime/task
+import bytes/bytes
+
+// Run a handler with the notes held in memory and the log discarded.
+//
+// No database, no file, no clock: the whole HTTP surface -- routing, status
+// codes, validation, codecs -- is exercised with nothing underneath it but a
+// list.  `served` returns the status and the body so a test can assert on the
+// contract a client sees.
+fun served( seed : list<note>, route : () -> <notes,async,logger|io> response ) : io (int, string)
+  with-task-group fn(_g)
+    with-no-logger
+      with-memory(seed)
+        val r = route()
+        (r.status, r.body.to-string-lossy)
+
+fun post( json-text : string, ct : string = "application/json" ) : request
+  Request("POST", "/items", "", "HTTP/1.1", [("content-type", ct)], bytes(json-text))
+
+fun id-param( s : string ) : params
+  [("id", s)]
 
 fun mem( action : (database) -> io a ) : io a
   with-database(":memory:") fn(d)
@@ -188,6 +210,51 @@ fun main()
             i := i + 1
           assert-equal(open-statements(), before)
       , timeout-s = 120),
+    ]),
+
+    // The whole HTTP surface, with a list where the database goes.  These
+    // assert on what a client sees -- status and body -- and run without
+    // opening a file, so they are the same on every machine and every run.
+    group("the HTTP surface, over an in-memory store", [
+      test("creating returns 201 and the stored note", fn()
+        val (status, body) = served([], { create-item(post("{\"title\":\"t\",\"body\":\"b\"}")) })
+        assert-equal(status, 201)
+        assert-true(body.contains("\"title\":\"t\""), body)
+        // ids and timestamps are the memory handler's, so they are pinned
+        assert-true(body.contains("\"id\":1"), body)
+      ),
+      test("the wrong content type is 415 and never reaches the store", fn()
+        val (status, _b) = served([], { create-item(post("{\"title\":\"t\"}", "text/plain")) })
+        assert-equal(status, 415)
+      ),
+      test("malformed json is 400, a rejected document is 422", fn()
+        assert-equal(served([], { create-item(post("{not json")) }).fst, 400)
+        assert-equal(served([], { create-item(post("{\"body\":\"b\"}")) }).fst, 422)
+        assert-equal(served([], { create-item(post("{\"title\":\"\"}")) }).fst, 422)
+      ),
+      test("fetching a missing note is 404", fn()
+        assert-equal(served([], { get-item(id-param("7")) }).fst, 404)
+      ),
+      test("a non-decimal id is 400, not 404", fn()
+        assert-equal(served([], { get-item(id-param("0x1")) }).fst, 400)
+        assert-equal(served([], { get-item(id-param("+1")) }).fst, 400)
+      ),
+      test("deleting reports whether anything went", fn()
+        val seed = [Note(1, "a", "", memory-epoch)]
+        assert-equal(served(seed, { delete-item(id-param("1")) }).fst, 204)
+        assert-equal(served(seed, { delete-item(id-param("2")) }).fst, 404)
+      ),
+      test("listing renders items and a count", fn()
+        val seed = [Note(2, "b", "", memory-epoch), Note(1, "a", "", memory-epoch)]
+        val (status, body) = served(seed, { list-items() })
+        assert-equal(status, 200)
+        assert-true(body.contains("\"count\":2"), body)
+      ),
+      test("health reports the count it can see", fn()
+        val (status, body) = served([Note(1, "a", "", memory-epoch)], { health() })
+        assert-equal(status, 200)
+        assert-true(body.contains("\"notes\":1"), body)
+      ),
     ]),
 
     group("routing", [

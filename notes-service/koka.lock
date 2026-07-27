@@ -6,13 +6,13 @@ koka = ">=3.2,<4"
 [packages.bytes]
 kind = "path"
 path = "../../koka-packages/bytes"
-checksum = "sha256:6fadb3a8b7a90ef2c6d6b1aaf30b4a2f25c875c92a6c2c006216ba4477ae74fe"
+checksum = "sha256:d95a466a6992253df0838a02d749afecb4beedda278d64fe00ad942a6605f80b"
 dependencies = ["kktest"]
 
 [packages.fileio]
 kind = "path"
 path = "../../koka-packages/fileio"
-checksum = "sha256:7c3e38e5611e696d733b05305ca0e39f9153ab5e7baf9ed8e02f4ce9b398b796"
+checksum = "sha256:d07f09508214a541fec68a1e76de85a278d39ad77324cf396b3663a51fcacbad"
 dependencies = ["bytes", "kktest", "resource"]
 
 [packages.hashmap]
@@ -30,7 +30,7 @@ dependencies = ["bytes", "kktest", "logging", "runtime", "strbuilder"]
 [packages.json]
 kind = "path"
 path = "../../koka-packages/json"
-checksum = "sha256:34c2efb784a09534d33feb6cc4326274e2489b2e202d2447164517ee847d800f"
+checksum = "sha256:96186d47068086cedad5d03824348b3416bb4123a07bab5d4cc0c9e4035caa93"
 dependencies = ["bytes", "hashmap", "kktest", "strbuilder"]
 
 [packages.kktest]
@@ -42,7 +42,7 @@ dependencies = []
 [packages.logging]
 kind = "path"
 path = "../../koka-packages/logging"
-checksum = "sha256:00a9cb4867fb3e84fe388289a4762783257c885bf0ae98c545996f485953cc07"
+checksum = "sha256:ef81b9ace55af85a86f286b4671e69d361742b36dc8716b360854c5814110c34"
 dependencies = ["json", "kktest", "strbuilder"]
 
 [packages.resource]
@@ -60,11 +60,11 @@ dependencies = ["bytes", "kktest", "resource"]
 [packages.sqlite]
 kind = "path"
 path = "../../koka-packages/sqlite"
-checksum = "sha256:1855b66a7fffd9911e26ade0e0615ce787774eebed23458aa754b6e3d1b8d028"
+checksum = "sha256:83c6ca865d4fc36a8481714cde03c8068e8a8d57c3ed1edfe738c602c5e20fcd"
 dependencies = ["bytes", "kktest", "resource"]
 
 [packages.strbuilder]
 kind = "path"
 path = "../../koka-packages/strbuilder"
-checksum = "sha256:9f3741dfd6578a8beb00424d698a3271fcc3b20c96f8edde75772e64a4c7b491"
+checksum = "sha256:36064cb798eafda61069712fa549248200283a46f320bf55b206ec052e3f904c"
 dependencies = ["bytes", "kktest"]
