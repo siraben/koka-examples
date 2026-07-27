@@ -56,9 +56,9 @@ All optional, all read from the environment:
 | variable       | default     | meaning                                  |
 | -------------- | ----------- | ---------------------------------------- |
 | `NOTES_HOST`   | `127.0.0.1` | bind address                             |
-| `NOTES_PORT`   | `8080`      | port; `0` asks the OS for a free one     |
+| `NOTES_PORT`   | `8080`      | port; `0` asks the OS for a free one. A value that is not a decimal integer refuses to start rather than falling back |
 | `NOTES_DB`     | `notes.db`  | SQLite database file                     |
-| `NOTES_LOG`    | `info`      | `debug` \| `info` \| `warn` \| `error`   |
+| `NOTES_LOG`    | `info`      | `debug` \| `info` \| `warn` \| `error`; anything else refuses to start |
 | `NOTES_RUN_MS` | `0`         | stop after this many ms; `0` runs forever |
 
 `NOTES_RUN_MS` exists so the integration tests can let the server shut itself
@@ -109,7 +109,34 @@ outlive the server.  The event loop is single threaded: a database connection
 is used by one task at a time by construction, which is why there is no pool
 and no locking.
 
-## How Koka effects are used
+## How Koka is used
+
+**Handlers read as the sequence of checks they are.**  Every step in a request
+either yields a value or short-circuits with the response to send, which is
+`either<response,a>` — spelled `step<a>` here.  `with x <- s.or-respond`
+desugars to `or-respond(s, fn(x) ...)`, so the rest of the handler becomes the
+continuation and the failure path is stated once:
+
+```koka
+fun create-item( d : database, r : request ) : <async,logger|io> response
+  with j             <- r.json-body.or-respond
+  with (title, body) <- new-note(j).or-respond
+  with n             <- attempt({ create-note(d, title, body) }).or-respond
+  created-json(note-json(n))
+```
+
+Four checks, four lines, in the order they happen.  Written with `match` the
+same handler nests four deep and the interesting line is the innermost one.
+The second line binds a *pattern*, which is the construct
+[koka-lang/koka#914](https://github.com/koka-lang/koka/pull/914) fixes — it
+aborted the compiler before that.
+
+Each step names its own failure, so the status codes are decided where the
+knowledge is: `json-body` distinguishes a missing content type (415) from a
+body that will not parse (400), `new-note` returns 422 because a well-formed
+document this API declines is not a malformed one, and `attempt` turns anything
+the store raises into a logged 500 — after re-raising cancellation, which is
+the server stopping rather than a request failing.
 
 **Logging** is an effect (`logger`).  A handler says *what* happened; the
 handler installed at the edge decides where it goes and what context it

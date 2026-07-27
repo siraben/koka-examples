@@ -100,7 +100,7 @@ fun server-error() : div response
   json-response(500, "{\"error\":\"internal server error\"}")
 
 // ----------------------------------------------------------------------------
-// handlers
+// routes
 // ----------------------------------------------------------------------------
 
 pub fun routes( d : database ) : list<route<<async,logger|io>>>
@@ -111,6 +111,75 @@ pub fun routes( d : database ) : list<route<<async,logger|io>>>
   , route("DELETE", "/items/:id", fn(_r, p)  delete-item(d, p))
   ]
 
+// ----------------------------------------------------------------------------
+// handler steps
+// ----------------------------------------------------------------------------
+
+// A step in a handler: the value to carry on with, or the response to send
+// instead of carrying on.
+//
+// `with x <- step.or-respond` is what lets a handler read as the sequence of
+// checks it is.  Written with nested `match`, the same five checks nest five
+// deep and the interesting line is the innermost one.
+pub alias step<a> = either<response,a>
+
+fun or-respond( s : step<a>, next : (a) -> <async,logger|io> response )
+    : <async,logger|io> response
+  match s
+    Left(resp) -> resp
+    Right(v)   -> next(v)
+
+// The media type without its parameters: `text/plain; charset=utf-8` is
+// `text/plain`.  Compared whole, so `application/jsonp` is not JSON.
+fun media-type( ct : string ) : div string
+  ct.split(";").head.default("").trim.to-lower
+
+// The body as JSON, or the response saying why it is not.  A missing
+// content-type is a 415; a body that does not parse is a 400.
+fun json-body( r : request ) : div step<json>
+  val declared = match r.header("content-type")
+                   Just(ct) -> ct.media-type
+                   Nothing  -> ""
+  if declared != "application/json" then
+    Left(client-error(415, "expected content-type: application/json"))
+  else match parse(r.body, json-limits)
+    Right(j) -> Right(j)
+    Left(e)  -> Left(client-error(400, "malformed JSON: " ++ e.show))
+
+// A well-formed document that this API declines is a 422, not a 400: the
+// client's JSON was fine, its meaning was not.
+fun new-note( j : json ) : div step<(string, string)>
+  match decode-new-note(j)
+    Right(tb) -> Right(tb)
+    Left(msg) -> Left(client-error(422, msg))
+
+// `strict-nat` rather than `parse-int`: the latter accepts `0x1`, `+1` and
+// `1_0`, so `/items/0x1` would delete note 1 while reading as something else
+// to any gateway in front of us.
+fun note-id( p : params ) : div step<int>
+  match p.param("id")
+    Nothing -> Left(client-error(400, "missing id"))
+    Just(s) ->
+      match s.strict-nat
+        Just(i) -> Right(i)
+        Nothing -> Left(client-error(400, "id must be a decimal integer, got " ++ s.show))
+
+// Run a store operation.  A cancellation is the server stopping and propagates;
+// anything else is ours, so it is logged and answered with a 500 that says
+// nothing about it.
+fun attempt( action : () -> <async,logger|io> a ) : <async,logger|io> step<a>
+  match try(action)
+    Ok(v)     -> Right(v)
+    Error(ex) ->
+      if is-cancellation(ex) then throw-exn(ex)
+      else
+        error("request failed", [("error", ex.message)])
+        Left(server-error())
+
+// ----------------------------------------------------------------------------
+// handlers
+// ----------------------------------------------------------------------------
+
 fun health( d : database ) : <async,logger|io> response
   // A health check that does not touch the database is not a health check.
   match try({ count-notes(d) })
@@ -120,67 +189,24 @@ fun health( d : database ) : <async,logger|io> response
       json-response(503, "{\"status\":\"unavailable\"}")
 
 fun list-items( d : database ) : <async,logger|io> response
-  match try({ list-notes(d, page-size) })
-    Ok(ns)    -> ok-json(notes-json(ns))
-    Error(ex) -> report(ex)
+  with ns <- attempt({ list-notes(d, page-size) }).or-respond
+  ok-json(notes-json(ns))
 
 fun get-item( d : database, p : params ) : <async,logger|io> response
-  match parse-id(p)
-    Left(msg) -> client-error(400, msg)
-    Right(id) ->
-      match try({ get-note(d, id) })
-        Error(ex)      -> report(ex)
-        Ok(Nothing)    -> client-error(404, "no note with id " ++ id.show)
-        Ok(Just(n))    -> ok-json(note-json(n))
+  with id <- p.note-id.or-respond
+  with mb <- attempt({ get-note(d, id) }).or-respond
+  match mb
+    Just(n) -> ok-json(note-json(n))
+    Nothing -> client-error(404, "no note with id " ++ id.show)
 
 fun create-item( d : database, r : request ) : <async,logger|io> response
-  // The server has already enforced the body size limit; this is the content
-  // check, which is a different thing.
-  // A missing header, `application/jsonp`, and `text/plain; x=application/json`
-  // all used to pass a `contains` check.  Compare the media type itself, with
-  // any parameters stripped, and require it to be present.
-  if !r.is-json then
-    client-error(415, "expected content-type: application/json")
-  else
-      match parse(r.body, json-limits)
-        Left(e)  -> client-error(400, "malformed JSON: " ++ e.show)
-        Right(j) ->
-          match decode-new-note(j)
-            Left(msg) -> client-error(422, msg)
-            Right((title, body)) ->
-              match try({ create-note(d, title, body) })
-                Ok(n)     -> created-json(note-json(n))
-                Error(ex) -> report(ex)
+  with j             <- r.json-body.or-respond
+  with (title, body) <- new-note(j).or-respond
+  with n             <- attempt({ create-note(d, title, body) }).or-respond
+  created-json(note-json(n))
 
 fun delete-item( d : database, p : params ) : <async,logger|io> response
-  match parse-id(p)
-    Left(msg) -> client-error(400, msg)
-    Right(id) ->
-      match try({ delete-note(d, id) })
-        Error(ex)   -> report(ex)
-        Ok(True)    -> response(204)
-        Ok(False)   -> client-error(404, "no note with id " ++ id.show)
-
-fun is-json( r : request ) : div bool
-  match r.header("content-type")
-    Nothing -> False
-    Just(ct) -> ct.split(";").head.default("").trim.to-lower == "application/json"
-
-// `strict-nat` rather than `parse-int`: the latter accepts `0x1`, `+1` and
-// `1_0`, so `/items/0x1` would delete note 1 while reading as something else
-// to any gateway in front of us.
-fun parse-id( p : params ) : div either<string, int>
-  match p.param("id")
-    Nothing -> Left("missing id")
-    Just(s) ->
-      match s.strict-nat
-        Nothing -> Left("id must be a decimal integer, got " ++ s.show)
-        Just(i) -> Right(i)
-
-// Turn an exception into a response.  A cancellation is the server shutting
-// down and must propagate; anything else is ours and is logged, not shown.
-fun report( ex : exception ) : <async,logger|io> response
-  if is-cancellation(ex) then throw-exn(ex)
-  else
-    error("request failed", [("error", ex.message)])
-    server-error()
+  with id      <- p.note-id.or-respond
+  with removed <- attempt({ delete-note(d, id) }).or-respond
+  if removed then response(204)
+  else client-error(404, "no note with id " ++ id.show)

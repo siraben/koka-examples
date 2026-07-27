@@ -29,21 +29,32 @@ fun env-or( name : string, fallback : string ) : io string
     Just(v) | v.is-notempty -> v
     _ -> fallback
 
+// A setting that is present but unreadable is a startup failure, not a reason
+// to use the default.  `parse-int` accepts `0x1F90` and `+8080`, so
+// `NOTES_PORT=8O80` -- with a letter O -- would bind 8080 and say nothing;
+// an operator would find out from the wrong port being open.
 fun env-int( name : string, fallback : int ) : io int
-  env-or(name, "").parse-int.default(fallback)
+  match get-env-value(name)
+    Nothing -> fallback
+    Just(v) | v.is-empty -> fallback
+    Just(v) ->
+      match v.strict-nat
+        Just(i)  -> i
+        Nothing  -> throw(name ++ " must be a decimal integer, got " ++ v.show)
 
-fun level-of( s : string ) : level
+fun level-of( name : string, s : string ) : io level
   match s.to-lower
     "debug" -> Debug
+    "info"  -> Info
     "warn"  -> Warn
     "error" -> Error
-    _       -> Info
+    other   -> throw(name ++ " must be debug, info, warn or error, got " ++ other.show)
 
 fun main()
   val host    = env-or("NOTES_HOST", "127.0.0.1")
   val port    = env-int("NOTES_PORT", 8080)
   val db-path = env-or("NOTES_DB", "notes.db")
-  val level   = level-of(env-or("NOTES_LOG", "info"))
+  val level   = level-of("NOTES_LOG", env-or("NOTES_LOG", "info"))
   val run-ms  = env-int("NOTES_RUN_MS", 0)
 
   // The database is opened once and shared by every request: the runtime is

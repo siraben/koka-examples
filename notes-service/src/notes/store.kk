@@ -81,18 +81,22 @@ pub fun delete-note( d : database, id : int ) : io bool
     d.run("DELETE FROM notes WHERE id = ?", [SqlInt(id)])
     d.changes > 0
 
+// `COUNT(*)` always returns one integer row, so anything else is a broken
+// schema rather than an empty table.  Answering 0 would make the health check
+// report success for exactly the condition it exists to catch.
 pub fun count-notes( d : database ) : io int
   match d.query-one("SELECT COUNT(*) AS n FROM notes")
-    Just(r) -> r.int-at("n").default(0)
-    Nothing -> 0
+    Just(r) ->
+      match r.int-at("n")
+        Just(n)  -> n
+        Nothing  -> throw("the note count did not come back as an integer")
+    Nothing -> throw("counting notes returned no row")
 
 // Drop the `Nothing`s.  A row that does not decode is a schema bug, not a
 // client error, so it is skipped rather than turned into a 500 -- the
 // migration tests are what keep it from happening.
-fun keep-just( xs : list<maybe<a>> ) : div list<a>
-  xs.foldl([], keep-one)
-
-fun keep-one( acc : list<a>, m : maybe<a> ) : list<a>
-  match m
-    Just(x) -> acc ++ [x]
-    Nothing -> acc
+//
+// Written with `filter-map` rather than a fold that appends: `acc ++ [x]`
+// copies the accumulator once per row, which is O(n^2) over a page.
+fun keep-just( xs : list<maybe<a>> ) : list<a>
+  xs.filter-map(fn(m) m)
