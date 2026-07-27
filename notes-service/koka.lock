@@ -6,13 +6,13 @@ koka = ">=3.2,<4"
 [packages.bytes]
 kind = "path"
 path = "../../koka-packages/bytes"
-checksum = "sha256:6e929fb770d95a353181a79a501dd4b09e6afd78422b339a49c2bee0fb210638"
+checksum = "sha256:1c825927ae517e5e680c2ee42ae024ac433402e572f379bd2a76ce31398937ce"
 dependencies = ["kktest"]
 
 [packages.fileio]
 kind = "path"
 path = "../../koka-packages/fileio"
-checksum = "sha256:41a5a7505c177c8f4e2d6eafdf055ad1e3e98820da484a2a45017a5c641f6ae6"
+checksum = "sha256:7105c4b13dc3d0df0988243c4a7beaca1194ffcf3b146e977892858e2cc0a69f"
 dependencies = ["bytes", "kktest", "resource"]
 
 [packages.hashmap]
@@ -24,13 +24,13 @@ dependencies = ["kktest"]
 [packages.http]
 kind = "path"
 path = "../../koka-packages/http"
-checksum = "sha256:22e0aeefbdbc689a581b39d66da90dd02f161a61754c9bb2709431f44dae06be"
+checksum = "sha256:0c57fe2ad65f323a034a61fcabdfe74c895f48ec90096e5119064ffdbc06155f"
 dependencies = ["bytes", "kktest", "logging", "runtime", "strbuilder"]
 
 [packages.json]
 kind = "path"
 path = "../../koka-packages/json"
-checksum = "sha256:bca33ee1cc246621282e88ef725229b0e8f56ac488ba5ce25d2ef0eab4a808c8"
+checksum = "sha256:888613c61ed3d649b9249bd5c44b1df7fdc405da18c0f9070db1919ec0345a86"
 dependencies = ["bytes", "hashmap", "kktest", "strbuilder"]
 
 [packages.kktest]
@@ -42,7 +42,7 @@ dependencies = []
 [packages.logging]
 kind = "path"
 path = "../../koka-packages/logging"
-checksum = "sha256:8bc11b478807f28052fa373ca28185a6b0a73a20cfbca0415228d648661f72ec"
+checksum = "sha256:5a054b73e5461727c23a45a0d63aa9a10fb3823cdc48b6ad15d13018a219958b"
 dependencies = ["json", "kktest", "strbuilder"]
 
 [packages.resource]
@@ -54,17 +54,17 @@ dependencies = ["kktest"]
 [packages.runtime]
 kind = "path"
 path = "../../koka-packages/runtime"
-checksum = "sha256:dbb4b928556d17089cae9f446d3b8236010eb4580c3b87efb2ee0ec75f5453c4"
+checksum = "sha256:d10d80f0bf8df8a0755e13fdd8984a830071a984fac4a5ce1c2e08b80755935a"
 dependencies = ["bytes", "kktest", "resource"]
 
 [packages.sqlite]
 kind = "path"
 path = "../../koka-packages/sqlite"
-checksum = "sha256:c1fe9617397f8e193c590b00de88f1c515ee475f23f8870f603f1a7295341340"
+checksum = "sha256:3d9f8a6bf2c7700279387dc898d4e28eb7629930763b2daab07fecfe920b8ddd"
 dependencies = ["bytes", "kktest", "resource"]
 
 [packages.strbuilder]
 kind = "path"
 path = "../../koka-packages/strbuilder"
-checksum = "sha256:431a8275388bec11f20886f95d7683af3b1ef26474894c89570d1fdd40561947"
+checksum = "sha256:e02d0954dad2f12a98cbdde9ca782891eeb0e0ec98f2927eade93b6e782c445a"
 dependencies = ["bytes", "kktest"]
